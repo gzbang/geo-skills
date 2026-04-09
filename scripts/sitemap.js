@@ -229,17 +229,8 @@ async function main() {
   log(`  目标：${origin}`);
   log('══════════════════════════════════════════════════════\n');
 
-  // 1. robots.txt
-  log('── robots.txt ─────────────────────────────────────────');
+  // 1. 发现可访问的 sitemap（内部通过 robots.txt + 常见路径）
   const robots = await checkRobots();
-  if (!robots.robotsAccessible) {
-    log(`${WARN} robots.txt 不可访问`);
-  } else if (robots.found) {
-    log(`${PASS} robots.txt 声明了 ${robots.sitemapUrls.length} 个 Sitemap`);
-    robots.sitemapUrls.forEach(u => log(`     ${u}`));
-  } else {
-    log(`${WARN} robots.txt 存在，但未声明 Sitemap`);
-  }
 
   // 2. 发现可访问的 sitemap
   log('\n── Sitemap 可访问性 ───────────────────────────────────');
@@ -299,9 +290,9 @@ async function main() {
 
   const sizeStatus = total > 50000 ? FAIL : PASS;
   log(`${sizeStatus} URL 总数：${total.toLocaleString()}${total > 50000 ? '（超过 50,000 条单文件限制，需拆分为 sitemap index）' : ''}`);
-  log(`${lastmodPct >= 80 ? PASS : WARN} lastmod 覆盖率：${lastmodPct}%（${withLastmod} / ${total}）${lastmodPct < 80 ? '  建议 >80%' : ''}`);
-  log(`─   changefreq 覆盖率：${changefreqPct}%（${withChangefreq} / ${total}）`);
-  log(`─   priority 覆盖率：${priorityPct}%（${withPriority} / ${total}）`);
+  log(`${lastmodPct >= 90 ? PASS : FAIL} lastmod 覆盖率：${lastmodPct}%（${withLastmod} / ${total}）${lastmodPct < 90 ? '  需 ≥90%' : ''}`);
+  log(`${changefreqPct >= 90 ? PASS : FAIL} changefreq 覆盖率：${changefreqPct}%（${withChangefreq} / ${total}）${changefreqPct < 90 ? '  需 ≥90%' : ''}`);
+  log(`${priorityPct >= 90 ? PASS : FAIL} priority 覆盖率：${priorityPct}%（${withPriority} / ${total}）${priorityPct < 90 ? '  需 ≥90%' : ''}`);
 
   // 5. URL 抽样健康检查
   let sampleResults = { ok: 0, redirect: 0, clientError: 0, serverError: 0, timeout: 0 };
@@ -332,14 +323,14 @@ async function main() {
       }
 
       if (verbose) {
-        const icon = status >= 200 && status < 300 ? PASS : status >= 300 && status < 400 ? WARN : FAIL;
-        log(`  ${icon} [${status || 'timeout'}] ${loc}`);
+        const isOk = status >= 200 && status < 300;
+        log(`  ${isOk ? PASS : FAIL} [${status || 'timeout'}] ${loc}`);
       }
     }
 
     const sampleTotal = checks.length;
-    const errorCount = sampleResults.clientError + sampleResults.serverError + sampleResults.timeout;
-    const sampleStatus = errorCount === 0 ? PASS : errorCount / sampleTotal < 0.1 ? WARN : FAIL;
+    const errorCount = sampleResults.clientError + sampleResults.serverError + sampleResults.timeout + sampleResults.redirect;
+    const sampleStatus = errorCount === 0 ? PASS : FAIL;
 
     log(`${sampleStatus} 抽样 ${sampleTotal} 条 URL：`);
     log(`     2xx 正常：${sampleResults.ok}`);
@@ -357,18 +348,16 @@ async function main() {
   const issues = [];
   const warnings = [];
 
-  if (!robots.robotsAccessible)         warnings.push('robots.txt 不可访问');
-  else if (!robots.found)               warnings.push('robots.txt 未声明 Sitemap 路径');
   if (total > 50000)                    issues.push(`URL 总数 ${total} 超过 50,000 单文件限制`);
-  if (lastmodPct < 80)                  warnings.push(`lastmod 覆盖率仅 ${lastmodPct}%`);
+  if (lastmodPct < 90)                  issues.push(`lastmod 覆盖率 ${lastmodPct}%，需 ≥90%`);
+  if (changefreqPct < 90)              issues.push(`changefreq 覆盖率 ${changefreqPct}%，需 ≥90%`);
+  if (priorityPct < 90)                issues.push(`priority 覆盖率 ${priorityPct}%，需 ≥90%`);
   if (parseErrors > 0)                  issues.push(`${parseErrors} 个 sitemap 解析失败`);
 
-  const errorCount = sampleResults.clientError + sampleResults.serverError + sampleResults.timeout;
+  const errorCount = sampleResults.clientError + sampleResults.serverError + sampleResults.timeout + sampleResults.redirect;
   const sampleTotal = sampledUrls.length;
-  if (sampleTotal > 0 && errorCount / sampleTotal >= 0.1) {
-    issues.push(`抽样 URL 错误率 ${Math.round(errorCount / sampleTotal * 100)}%（${errorCount}/${sampleTotal}）`);
-  } else if (sampleTotal > 0 && errorCount > 0) {
-    warnings.push(`抽样 URL 存在 ${errorCount} 条错误`);
+  if (sampleTotal > 0 && errorCount > 0) {
+    issues.push(`抽样 URL 存在 ${errorCount} 条非 2xx 响应（${errorCount}/${sampleTotal}）`);
   }
 
   if (issues.length === 0 && warnings.length === 0) {
